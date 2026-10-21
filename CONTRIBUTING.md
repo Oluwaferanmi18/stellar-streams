@@ -16,7 +16,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 
 To contribute to this project, you will need:
 
-- **Node.js** >= 18.0.0
+- **Node.js** >= 22.0.0 (pinned in `.nvmrc`; `engines` enforces it — see [docs/development-guide.md](docs/development-guide.md))
 - **pnpm** >= 9.0.0
 - **Git**
 
@@ -25,7 +25,7 @@ To contribute to this project, you will need:
 > `engine-strict=true` and a `preinstall` guard rejects both with a clear message
 > instead of writing a conflicting `package-lock.json` or `yarn.lock`.
 >
-> Enable pnpm with [Corepack](https://pnpm.io/installation#using-corepack) if you
+> Enable pnpm with [Corepack](https://pnpm.io/installation) if you
 > do not have it: `corepack enable`.
 
 ### Installation
