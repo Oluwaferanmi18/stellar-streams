@@ -1,36 +1,26 @@
-# Documentation index
+# Stellar Streams Documentation Index
 
-Every page in `docs/`, grouped by what you are trying to do. Each entry names its
-audience, so you can tell in one glance whether it is the page you need.
+Welcome to the Stellar Streams protocol documentation. Use this index to navigate the technical guides, specifications, and migration instructions.
 
-## Getting started
+---
 
-| Page                                            | Audience                                                                                                                                                                   |
-| :---------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Local development guide](development-guide.md) | Anyone setting up a machine from scratch: the pinned Node/pnpm toolchain, the local Stellar Quickstart node, and the build / test / optimize / deploy / bindings workflow. |
+## Documentation Directory
 
-## Protocol
+| Document                                            | Description                                                                                                                                                                        |
+| :-------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Migration Guide](migration.md)**                 | Step-by-step guide for migrating from `@stellar-starter-kit/*` to `@stellar-streams/*`, including an import mapping table, copy-pasteable codemods, and behaviour changes.         |
+| **[Contract Reference](contracts.md)**              | Comprehensive specification for all Soroban smart contracts (`stream`, `splits`, `escrow`), detailing functions, arguments, return types, numeric error codes, and event payloads. |
+| **[Local Development Guide](development-guide.md)** | Instructions for setting up local development with Docker, Stellar Quickstart, Soroban CLI, testing, and snapshot verification.                                                    |
+| **[Deployments](deployments.md)**                   | Testnet and Mainnet contract IDs, deployment ledger sequences, and explorer links.                                                                                                 |
+| **[Good First Issues](good-first-issues.md)**       | Curated roadmap of beginner and contributor tasks across contracts, SDK, and web dashboard.                                                                                        |
 
-| Page                               | Audience                                                                                                                                                                                    |
-| :--------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Contract reference](contracts.md) | Integrators and indexer authors: every entry point, error code, and event shape of the `stream`, `splits`, and `escrow` contracts — including the cases the Rust source does not advertise. |
+---
 
-## Contributing
+## Package References
 
-| Page                                      | Audience                                                                                                                                                                          |
-| :---------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Good first issues](good-first-issues.md) | New and existing contributors: a curated backlog of independently solvable issues, each with suggested labels, context, task, and acceptance criteria, ready to copy into GitHub. |
-
-## Operations
-
-| Page                          | Audience                                                                                                                      |
-| :---------------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
-| [Deployments](deployments.md) | Anyone verifying a deployment: contract ids per network, explorer links, and how to regenerate the page right after a deploy. |
-
-## Elsewhere in the repository
-
-- [README](../README.md) — protocol overview, quick start, and SDK usage.
-- [ARCHITECTURE](../ARCHITECTURE.md) — how the contracts, packages, and app fit together.
-- [CONTRIBUTING](../CONTRIBUTING.md) — workflow, standards, and how to open a pull request.
-- [Roadmap](../ROADMAP.md) — what is done, next, and later.
-- [Security policy](../SECURITY.md) — how to report vulnerabilities.
+- **SDK (`packages/sdk`)**: Typed client for simulation, wallet signing, and Soroban interaction ([SDK README](../packages/sdk/README.md)).
+- **Types (`packages/types`)**: Core protocol interfaces and domain models.
+- **Utils (`packages/utils`)**: Stroop/token formatting, BigInt math, and vesting curve chart generator (`vestingCurve`).
+- **Contracts (`packages/contracts`)**: Pre-generated TypeScript contract client bindings for `stream`, `splits`, and `escrow`.
+- **Wallets (`packages/wallets`)**: Multi-wallet connector integration supporting Freighter, Albedo, Rabet, and Hana.
+- **Web App (`apps/web`)**: Next.js 15 dashboard for stream creation, management, and escrow operations.

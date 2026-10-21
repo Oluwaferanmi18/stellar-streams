@@ -2,31 +2,13 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
-  isConnected as checkFreighterConnected,
-  getAddress as getFreighterAddress,
-  signTransaction as signFreighterTransaction,
-  requestAccess as requestFreighterAccess,
-} from '@stellar/freighter-api';
-import albedo from '@albedo-link/intent';
-
-interface RabetInterface {
-  connect: () => Promise<{ publicKey: string }>;
-  sign: (xdr: string, network: string) => Promise<string>;
-}
-
-interface HanaInterface {
-  send: (
-    method: string,
-    params?: { xdr: string; network: string },
-  ) => Promise<{ publicKey?: string; signedTransaction?: string } | string>;
-}
-
-declare global {
-  interface Window {
-    rabet?: RabetInterface;
-    hanaWallet?: HanaInterface;
-  }
-}
+  AlbedoAdapter,
+  FreighterAdapter,
+  HanaAdapter,
+  RabetAdapter,
+  type WalletAdapter,
+} from './adapters/index.js';
+import { isUserRejection, NotSupportedError, toSigningError } from './errors.js';
 
 export type WalletType = 'freighter' | 'albedo' | 'rabe' | 'hana';
 
@@ -43,6 +25,14 @@ export interface WalletContextType {
     xdr: string,
     opts?: { network?: string; networkPassphrase?: string },
   ) => Promise<string>;
+  /**
+   * Sign a Soroban authorization entry. Rejects with `NotSupportedError` when
+   * the active wallet cannot sign auth entries.
+   */
+  signAuthEntry: (
+    entryXdr: string,
+    opts?: { network?: string; networkPassphrase?: string },
+  ) => Promise<string>;
   setNetwork: (network: string) => void;
 }
 
@@ -51,12 +41,22 @@ const WalletContext = createContext<WalletContextType | undefined>(undefined);
 const LOCAL_STORAGE_KEY_PROVIDER = 'stellar_starter_kit_wallet_provider';
 const LOCAL_STORAGE_KEY_ADDRESS = 'stellar_starter_kit_wallet_address';
 
+/** One adapter per supported wallet, keyed by provider id. */
+const ADAPTERS: Record<WalletType, WalletAdapter> = {
+  freighter: new FreighterAdapter(),
+  albedo: new AlbedoAdapter(),
+  rabe: new RabetAdapter(),
+  hana: new HanaAdapter(),
+};
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [activeAddress, setActiveAddress] = useState<string | null>(null);
   const [activeProvider, setActiveProvider] = useState<WalletType | null>(null);
   const [network, setNetwork] = useState<string>('TESTNET');
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const adapterFor = useCallback((provider: WalletType): WalletAdapter => ADAPTERS[provider], []);
 
   // Auto-reconnect from localStorage on mount
   useEffect(() => {
@@ -69,62 +69,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const connect = useCallback(async (provider: WalletType) => {
-    setIsConnecting(true);
-    setError(null);
-    try {
-      let publicKey = '';
-      if (provider === 'freighter') {
-        const connection = await checkFreighterConnected();
-        if (!connection.isConnected) {
-          throw new Error('Freighter wallet extension is not installed or enabled.');
-        }
-        try {
-          const access = await requestFreighterAccess();
-          publicKey = access.address;
-        } catch {
-          const address = await getFreighterAddress();
-          publicKey = address.address;
-        }
-      } else if (provider === 'albedo') {
-        const res = await albedo.publicKey({});
-        publicKey = res.pubkey;
-      } else if (provider === 'rabe') {
-        const rabet = window.rabet;
-        if (!rabet) {
-          throw new Error('Rabet wallet extension is not installed.');
-        }
-        const res = await rabet.connect();
-        publicKey = res.publicKey;
-      } else if (provider === 'hana') {
-        const hana = window.hanaWallet;
-        if (!hana) {
-          throw new Error('Hana wallet extension is not installed.');
-        }
-        const res = await hana.send('stellar:getPublicKey');
-        publicKey = typeof res === 'string' ? res : res.publicKey || '';
-      } else {
-        throw new Error(`Unsupported wallet provider: ${provider}`);
-      }
+  const connect = useCallback(
+    async (provider: WalletType) => {
+      setIsConnecting(true);
+      setError(null);
+      try {
+        const adapter = adapterFor(provider);
+        const publicKey = await adapter.connect();
 
-      if (!publicKey) {
-        throw new Error('Failed to retrieve public key from wallet.');
-      }
+        if (!publicKey) {
+          throw new Error('Failed to retrieve public key from wallet.');
+        }
 
-      setActiveAddress(publicKey);
-      setActiveProvider(provider);
-      localStorage.setItem(LOCAL_STORAGE_KEY_PROVIDER, provider);
-      localStorage.setItem(LOCAL_STORAGE_KEY_ADDRESS, publicKey);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'An unknown error occurred connecting to the wallet.';
-      setError(message);
-      console.error('Wallet connection error:', err);
-      throw err;
-    } finally {
-      setIsConnecting(false);
-    }
-  }, []);
+        setActiveAddress(publicKey);
+        setActiveProvider(provider);
+        localStorage.setItem(LOCAL_STORAGE_KEY_PROVIDER, provider);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ADDRESS, publicKey);
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'An unknown error occurred connecting to the wallet.';
+        setError(message);
+        console.error('Wallet connection error:', err);
+        throw err;
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [adapterFor],
+  );
 
   const disconnect = useCallback(() => {
     setActiveAddress(null);
@@ -134,10 +108,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(LOCAL_STORAGE_KEY_ADDRESS);
   }, []);
 
-  const signTransaction = useCallback(
-    async (xdr: string, opts?: { network?: string; networkPassphrase?: string }) => {
+  /** Signs through the active adapter and logs failures at the right level. */
+  const signWith = useCallback(
+    async (
+      method: 'signTransaction' | 'signAuthEntry',
+      xdr: string,
+      opts?: { network?: string; networkPassphrase?: string },
+    ): Promise<string> => {
+      const noun = method === 'signTransaction' ? 'transaction' : 'auth entry';
       if (!activeProvider || !activeAddress) {
-        throw new Error('No active wallet session to sign transaction.');
+        throw new Error(`No active wallet session to sign ${noun}.`);
+      }
+
+      const adapter = ADAPTERS[activeProvider];
+      const sign = adapter[method];
+      if (!sign) {
+        throw new NotSupportedError(method, adapter.name);
       }
 
       const passphrase =
@@ -147,53 +133,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           : 'Public Global Stellar Network ; September 2015');
 
       try {
-        if (activeProvider === 'freighter') {
-          const { signedTxXdr } = await signFreighterTransaction(xdr, {
-            networkPassphrase: passphrase,
-            address: activeAddress,
-          });
-          return signedTxXdr;
-        } else if (activeProvider === 'albedo') {
-          const res = await albedo.tx({
-            xdr,
-            network: network.toLowerCase(),
-          });
-          return res.signed_envelope_xdr;
-        } else if (activeProvider === 'rabe') {
-          const rabet = window.rabet;
-          if (!rabet) throw new Error('Rabet extension is missing.');
-          return await rabet.sign(xdr, network.toLowerCase());
-        } else if (activeProvider === 'hana') {
-          const hana = window.hanaWallet;
-          if (!hana) throw new Error('Hana extension is missing.');
-          const res = await hana.send('stellar:signTransaction', {
-            xdr,
-            network: network.toLowerCase(),
-          });
-          return typeof res === 'string' ? res : res.signedTransaction || '';
-        } else {
-          throw new Error(`Signer not implemented for: ${activeProvider}`);
-        }
+        return await sign.call(adapter, xdr, { networkPassphrase: passphrase, network });
       } catch (err) {
-        let message = 'Failed to sign transaction.';
-        if (err instanceof Error) {
-          message = err.message;
-        } else if (typeof err === 'string') {
-          message = err;
-        }
-
-        if (
-          message.toLowerCase().includes('user rejected') ||
-          message.toLowerCase().includes('declined')
-        ) {
-          console.warn('Transaction signing cancelled by user:', err);
+        const error = toSigningError(err, `Failed to sign ${noun}.`);
+        if (isUserRejection(error.message)) {
+          console.warn(`${noun} signing cancelled by user:`, err);
         } else {
-          console.error('Transaction signing failed:', err);
+          console.error(`${noun} signing failed:`, err);
         }
-        throw new Error(message);
+        throw error;
       }
     },
     [activeProvider, activeAddress, network],
+  );
+
+  const signTransaction = useCallback(
+    (xdr: string, opts?: { network?: string; networkPassphrase?: string }) =>
+      signWith('signTransaction', xdr, opts),
+    [signWith],
+  );
+
+  const signAuthEntry = useCallback(
+    (entryXdr: string, opts?: { network?: string; networkPassphrase?: string }) =>
+      signWith('signAuthEntry', entryXdr, opts),
+    [signWith],
   );
 
   return (
@@ -208,6 +171,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         connect,
         disconnect,
         signTransaction,
+        signAuthEntry,
         setNetwork,
       }}
     >
