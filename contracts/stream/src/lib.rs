@@ -67,6 +67,7 @@ pub enum StreamError {
     ReductionBelowVested = 20,
     /// Issue #80: `reduce_stream` was asked for a total that is not a reduction.
     InvalidReduction = 21,
+    SameRecipient = 22,
 }
 
 /// A single linear payment stream. Tokens are locked in the contract and vest
