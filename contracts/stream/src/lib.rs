@@ -63,6 +63,10 @@ pub enum StreamError {
     StreamCompleted = 18,
     /// Issue #181: `top_up` arithmetic would exceed the supported range.
     AmountOverflow = 19,
+    /// Issue #80: `reduce_stream` was asked for a total below what has vested.
+    ReductionBelowVested = 20,
+    /// Issue #80: `reduce_stream` was asked for a total that is not a reduction.
+    InvalidReduction = 21,
 }
 
 /// A single linear payment stream. Tokens are locked in the contract and vest
@@ -158,6 +162,19 @@ pub struct StreamCancelled {
     pub refunded: i128,
 }
 
+/// Emitted when the sender reduces a stream's total without cancelling it.
+#[contractevent(topics = ["stream", "reduced"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamReduced {
+    #[topic]
+    pub id: u64,
+    pub sender: Address,
+    /// The stream's new total, in the token's smallest unit.
+    pub new_total: i128,
+    /// The difference refunded to the sender.
+    pub refunded: i128,
+}
+
 /// Emitted when the admin changes the protocol fee.
 #[contractevent(topics = ["stream", "fee_set"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -186,6 +203,16 @@ pub struct StreamResumed {
     pub id: u64,
     pub resumed_at: u64,
     pub total_paused: u64,
+}
+
+/// Emitted when the recipient hands a stream off to a new address.
+#[contractevent(topics = ["stream", "transferred"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamRecipientTransferred {
+    #[topic]
+    pub id: u64,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
 }
 
 #[contract]
@@ -467,6 +494,68 @@ impl StreamContract {
         Ok(())
     }
 
+    /// Reduce a stream's total without cancelling it.
+    ///
+    /// Only the stream's sender may reduce it, and the new total must be a
+    /// positive amount strictly below the current total but at least the amount
+    /// already vested. The difference is refunded to the sender immediately.
+    ///
+    /// The schedule keeps the stream's current payment rate: `end_time` shrinks
+    /// by `new_total * duration / total_amount`, so already-vested tokens stay
+    /// vested and the recipient keeps earning at the same pace until the
+    /// reduced total runs out. Unlike [`StreamContract::cancel`], the stream is
+    /// not marked cancelled and its vested balance remains withdrawable.
+    pub fn reduce_stream(env: Env, stream_id: u64, new_total: i128) -> Result<(), StreamError> {
+        let key = DataKey::Stream(stream_id);
+        let mut stream: Stream =
+            env.storage().persistent().get(&key).ok_or(StreamError::StreamNotFound)?;
+
+        stream.sender.require_auth();
+
+        if stream.cancelled {
+            return Err(StreamError::AlreadyCancelled);
+        }
+        if new_total <= 0 || new_total >= stream.total_amount {
+            return Err(StreamError::InvalidReduction);
+        }
+
+        let now = env.ledger().timestamp();
+        let vested = vested_amount(&stream, now);
+        if new_total < vested {
+            return Err(StreamError::ReductionBelowVested);
+        }
+
+        // Shrink the schedule at the stream's current rate. Rounding the new
+        // duration down can only raise the rate slightly, never shrink an
+        // amount that has already vested.
+        let duration = i128::from(stream.end_time - stream.start_time);
+        let new_duration = new_total.checked_mul(duration).ok_or(StreamError::AmountOverflow)?
+            / stream.total_amount;
+        let new_duration = u64::try_from(new_duration).map_err(|_| StreamError::AmountOverflow)?;
+        let new_end_time =
+            stream.start_time.checked_add(new_duration).ok_or(StreamError::AmountOverflow)?;
+        let refunded = stream.total_amount - new_total;
+
+        // Persist before refunding, like `withdraw`, so a token callback can
+        // never observe tokens that have not been fully recorded yet.
+        stream.total_amount = new_total;
+        stream.end_time = new_end_time;
+        env.storage().persistent().set(&key, &stream);
+        env.storage().persistent().extend_ttl(&key, LEDGER_BUMP_THRESHOLD, LEDGER_BUMP_LIMIT);
+        env.storage().instance().extend_ttl(LEDGER_BUMP_THRESHOLD, LEDGER_BUMP_LIMIT);
+
+        token::Client::new(&env, &stream.token).transfer(
+            &env.current_contract_address(),
+            &stream.sender,
+            &refunded,
+        );
+
+        StreamReduced { id: stream_id, sender: stream.sender.clone(), new_total, refunded }
+            .publish(&env);
+
+        Ok(())
+    }
+
     /// Withdraw the currently vested (and not yet withdrawn) amount to the recipient.
     /// Returns the net amount transferred after any protocol fee.
     pub fn withdraw(env: Env, stream_id: u64) -> Result<i128, StreamError> {
@@ -547,6 +636,46 @@ impl StreamContract {
 
         StreamCancelled { id: stream_id, sender: stream.sender.clone(), refunded: unvested }
             .publish(&env);
+
+        Ok(())
+    }
+
+    /// Hand a stream off to `new_recipient`, e.g. after a key rotation or a sale.
+    ///
+    /// Only the current recipient may call this: `caller` must authorize and
+    /// match the stored recipient, otherwise the call fails with `Unauthorized`.
+    /// Amounts already withdrawn stay where they are; everything not yet
+    /// withdrawn — including a balance that has vested but was never claimed —
+    /// becomes withdrawable by `new_recipient` only. A recipient who wants to
+    /// keep the vested part should `withdraw` before transferring.
+    pub fn transfer_recipient(
+        env: Env,
+        stream_id: u64,
+        caller: Address,
+        new_recipient: Address,
+    ) -> Result<(), StreamError> {
+        let key = DataKey::Stream(stream_id);
+        let mut stream: Stream =
+            env.storage().persistent().get(&key).ok_or(StreamError::StreamNotFound)?;
+
+        caller.require_auth();
+        if caller != stream.recipient {
+            return Err(StreamError::Unauthorized);
+        }
+        if new_recipient == stream.recipient {
+            return Err(StreamError::SameRecipient);
+        }
+
+        let old_recipient = core::mem::replace(&mut stream.recipient, new_recipient);
+        env.storage().persistent().set(&key, &stream);
+        env.storage().persistent().extend_ttl(&key, LEDGER_BUMP_THRESHOLD, LEDGER_BUMP_LIMIT);
+
+        StreamRecipientTransferred {
+            id: stream_id,
+            old_recipient,
+            new_recipient: stream.recipient.clone(),
+        }
+        .publish(&env);
 
         Ok(())
     }

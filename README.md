@@ -69,7 +69,7 @@ stellar/
 │   ├── types/                # @stellar-starter-kit/types   — shared domain types
 │   ├── utils/                # @stellar-starter-kit/utils   — precise stroop & vesting math
 │   ├── hooks/                # @stellar-starter-kit/hooks   — React hooks (useStream)
-│   ├── wallets/              # @stellar-starter-kit/wallets — Freighter/Albedo/Rabet/Hana
+│   ├── wallets/              # @stellar-starter-kit/wallets — Freighter/Albedo/Rabet/Hana/Ledger
 │   ├── contracts/            # generated Soroban TS bindings
 │   └── ui/                   # shared UI primitives
 ├── apps/
@@ -85,7 +85,7 @@ stellar/
 ```mermaid
 graph TD
     Web["apps/web (Next.js 15)"] --> SDK["packages/sdk (StreamsClient)"]
-    Web --> Hooks["packages/hooks (useStream)"]
+    Web --> Hooks["packages/hooks (useStream, mutations)"]
     Web --> Wallets["packages/wallets"]
     SDK --> Types["packages/types"]
     Hooks --> SDK
@@ -114,6 +114,7 @@ The flagship contract locks tokens up front and releases them linearly.
 | `create_streams(sender, token, entries)`                             | Lock a whole batch atomically. Returns the new ids, in input order.       |
 | `withdraw(id)`                                                       | Recipient claims the vested, unclaimed balance.                           |
 | `cancel(id)`                                                         | Sender cancels; unvested funds are refunded, vested funds stay claimable. |
+| `transfer_recipient(id, caller, new_recipient)`                      | Recipient hands the unwithdrawn balance off to a new address.             |
 | `claimable(id)` / `vested(id)`                                       | View helpers.                                                             |
 | `get_stream(id)` / `get_config()` / `next_stream_id()`               | Read helpers.                                                             |
 
