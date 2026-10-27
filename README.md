@@ -28,7 +28,7 @@ typed TypeScript SDK and an open web dashboard.
 
 > **Project status:** pre-1.0. The contracts are implemented, unit-tested, and build clean under
 > `clippy` / `rustfmt`. They have **not** been audited or deployed to Mainnet. Before integrating,
-> read the [security model and trust assumptions](SECURITY.md#security-model) — who can cancel,
+> read the [security model and trust assumptions](SECURITY.md#threat-model) — who can cancel,
 > who holds fees, what the arbiter may do, and the inherent risks (no upgradeability, unaudited
 > contracts, admin key custody, TTL expiry). See the [Roadmap](ROADMAP.md) for what's next.
 
@@ -244,7 +244,7 @@ pnpm run node:local     # docker compose up -d (Stellar Quickstart)
 
 Want the complete path — local node → deploy `stream` → fund accounts → create a stream →
 advance time → withdraw — with every command and its expected output? Follow the
-[end-to-end walkthrough](docs/development-guide.md#3-end-to-end-walkthrough-a-stream-from-zero-to-withdraw)
+[end-to-end walkthrough](docs/development-guide.md)
 in the development guide (verified on Linux).
 
 ---
